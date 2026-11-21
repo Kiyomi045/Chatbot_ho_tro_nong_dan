@@ -9,7 +9,7 @@ from database import get_db
 from models import User, Conversation, Message
 from schemas import UserRegister, UseLogin, ChatRequest
 from security import hash_password, verify_password,creat_access_token, get_current_user, get_optional_current_user
-
+from search_qa import embed_query, retrieve_context, generate_answer
 
 app = FastAPI()
 
@@ -73,16 +73,17 @@ def login(data: UseLogin, db: Session = Depends(get_db)):
         select(User).where(User.email == email)
     )
 
-    access_token = creat_access_token(user.id)
-
     if user is None or not verify_password(
         data.password,
         user.hashed_password,
-    ):
+    ):    
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email hoặc mật khẩu không chính xác",
         )
+    
+    access_token = creat_access_token(user.id)
+
     return{
         "acsess_token": access_token,
         "token_type": "bearer", 
@@ -221,13 +222,27 @@ def chat(
             detail="Nội dung trống"
         )
     
+    #Gọi RAG tạo câu trả lời
+    query_embedding = embed_query(message_content)
+
+    context = retrieve_context(query_embedding)
+
+    if context is None:
+        assistant_content = ("Mộc chưa tìm thấy thông tin phù hợp trong cơ sở dữ liệu để trả lời câu hỏi này")
+    else:
+        assistant_content = generate_answer(
+            message_content, context
+        )
+    
+    #Xử lý trò chuyện khách khách
     if current_user is None:
         return{
             "conversation_id": None,
             "user_message": message_content,
-            "assistant_message": "Đây là câu trả lời thử nghiệm"
+            "assistant_message": assistant_content
         }
     
+    #Xử lý trò chuyện thành viên
     if data.conversation_id is not None:
         conversation = db.scalar(
             select(Conversation).where(Conversation.user_id == current_user.id,
@@ -239,6 +254,8 @@ def chat(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Không tìm thấy cuộc trò chuyện"
             )
+        if conversation.title == "Cuộc trò chuyện mới":
+            conversation.title = message_content[:255]
     else:
         conversation = Conversation(
             user_id = current_user.id,
@@ -255,8 +272,6 @@ def chat(
     )
     
     db.add(user_message)
-
-    assistant_content="Đây là câu trả lời thử nghiệm"
 
     assistant_message=Message(
         conversation_id = conversation.id,
@@ -290,7 +305,7 @@ def chat(
     }
 
 #Xóa cuộc trò chuyện(thành viên)
-@app.post("/coversations/{conversation_id}")
+@app.post("/conversations/{conversation_id}")
 def delete_conversation(
     conversation_id: int,
     db: Session = Depends(get_db),

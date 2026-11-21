@@ -58,6 +58,12 @@ def get_current_user(
         credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
         db: Session = Depends(get_db)
 ):
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Chưa đăng nhập"
+        )
+
     #Lấy chuỗi JWT từ thông tin xác thực Bearer
     token = credentials.credentials
 
